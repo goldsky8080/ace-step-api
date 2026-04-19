@@ -29,17 +29,17 @@ class AceStepClient:
         return True
 
     def create_task(self, payload: CreateMusicRequest) -> AceTaskSummary:
+        model_name = payload.model or "acestep-v15-turbo"
+        duration_seconds = payload.duration or 30
         request_body = {
             "prompt": payload.prompt or payload.stylePrompt,
             "lyrics": payload.lyrics,
             "vocal_language": payload.vocalLanguage,
             "audio_format": "mp3",
             "thinking": payload.thinking,
+            "model": model_name,
+            "audio_duration": duration_seconds,
         }
-        if payload.model:
-            request_body["model"] = payload.model
-        if payload.duration:
-            request_body["audio_duration"] = payload.duration
 
         try:
             response = httpx.post(
