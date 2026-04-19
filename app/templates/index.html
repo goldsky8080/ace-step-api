@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">ACE-Step Wrapper Contract Prototype</p>
+        <h1>{{ app_name }}</h1>
+        <p class="summary">
+          이 서버는 ACE-Step 엔진을 호출한 뒤 wrapper가 그대로 저장할 수 있는 정규화 응답만 반환합니다.
+        </p>
+        <div class="meta">
+          <span>ACE-Step Engine: {{ acestep_base_url }}</span>
+          <span>Response Contract: wrapper-save</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <form id="create-form" class="form">
+          <div class="field">
+            <label for="title">제목</label>
+            <input id="title" name="title" placeholder="비워두면 prompt 기반 자동 제목" />
+          </div>
+          <div class="field">
+            <label for="stylePrompt">Style Prompt</label>
+            <textarea id="stylePrompt" name="stylePrompt" required placeholder="cinematic korean ballad, warm strings, emotional male vocal"></textarea>
+          </div>
+          <div class="field">
+            <label for="lyrics">Lyrics</label>
+            <textarea id="lyrics" name="lyrics" placeholder="[Verse 1] ..."></textarea>
+          </div>
+          <div class="grid">
+            <div class="field">
+              <label for="prompt">Prompt Override</label>
+              <input id="prompt" name="prompt" placeholder="release_task에 직접 전달할 prompt" />
+            </div>
+            <div class="field">
+              <label for="model">Model</label>
+              <input id="model" name="model" placeholder="acestep-v15-turbo" />
+            </div>
+            <div class="field">
+              <label for="modelVersion">Model Version</label>
+              <input id="modelVersion" name="modelVersion" placeholder="ace_step_1_5" />
+            </div>
+            <div class="field">
+              <label for="duration">Duration (sec)</label>
+              <input id="duration" name="duration" type="number" min="10" max="600" step="1" placeholder="180" />
+            </div>
+            <div class="field">
+              <label for="vocalLanguage">Language</label>
+              <input id="vocalLanguage" name="vocalLanguage" value="ko" />
+            </div>
+          </div>
+          <label class="check">
+            <input id="thinking" name="thinking" type="checkbox" />
+            <span>thinking=true 사용</span>
+          </label>
+          <button id="submit-button" type="submit">Create</button>
+          <p id="message" class="message"></p>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Recent Normalized Results</h2>
+          <button id="refresh-button" type="button">Refresh</button>
+        </div>
+        <div id="music-list" class="music-list"></div>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("create-form");
+      const message = document.getElementById("message");
+      const submitButton = document.getElementById("submit-button");
+      const refreshButton = document.getElementById("refresh-button");
+      const musicList = document.getElementById("music-list");
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function renderItem(item) {
+        const media = item.imageUrl
+          ? `<img src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.title)}" />`
+          : `<div class="cover-placeholder">No cover</div>`;
+        const audio = item.mp3Url
+          ? `<audio controls preload="none" src="${escapeHtml(item.mp3Url)}"></audio>`
+          : `<p class="muted">오디오 준비 중</p>`;
+        const download = item.mp3Url
+          ? `<a class="link-button" href="/api/v1/music/${encodeURIComponent(item.requestId)}/download">Download</a>`
+          : "";
+
+        return `
+          <article class="music-card">
+            <div class="media">${media}</div>
+            <div class="body">
+              <div class="title-row">
+                <h3>${escapeHtml(item.title)}</h3>
+                <span class="badge badge-${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>
+              </div>
+              <p class="meta">requestId: ${escapeHtml(item.requestId)}</p>
+              <p class="meta">providerTaskId: ${escapeHtml(item.providerTaskId || "-")}</p>
+              <p class="meta">createdAt: ${escapeHtml(new Date(item.createdAt).toLocaleString())}</p>
+              <p class="description">${escapeHtml(item.stylePrompt || item.lyrics || "")}</p>
+              ${item.errorMessage ? `<p class="error-text">${escapeHtml(item.errorMessage)}</p>` : ""}
+              ${audio}
+              <div class="actions">${download}</div>
+            </div>
+          </article>
+        `;
+      }
+
+      async function loadMusic() {
+        const response = await fetch("/api/v1/music?limit=20");
+        const payload = await response.json();
+        musicList.innerHTML = payload.items.length
+          ? payload.items.map(renderItem).join("")
+          : `<p class="muted">아직 정규화 결과가 없습니다.</p>`;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        submitButton.disabled = true;
+        message.textContent = "ACE-Step 엔진 호출 후 정규화 응답을 기다리는 중입니다...";
+
+        const formData = new FormData(form);
+        const body = {
+          title: formData.get("title") || null,
+          lyrics: formData.get("lyrics") || "",
+          stylePrompt: formData.get("stylePrompt"),
+          prompt: formData.get("prompt") || null,
+          model: formData.get("model") || null,
+          modelVersion: formData.get("modelVersion") || null,
+          duration: formData.get("duration") ? Number(formData.get("duration")) : null,
+          vocalLanguage: formData.get("vocalLanguage") || "ko",
+          thinking: document.getElementById("thinking").checked,
+        };
+
+        try {
+          const response = await fetch("/api/v1/music", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.detail || payload.error || "정규화 응답 생성에 실패했습니다.");
+          }
+          message.textContent = `완료: ${payload.title} / ${payload.status} / ${payload.providerTaskId || "no-task-id"}`;
+          await loadMusic();
+        } catch (error) {
+          message.textContent = error.message || "요청 처리 중 오류가 발생했습니다.";
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+
+      refreshButton.addEventListener("click", () => {
+        void loadMusic();
+      });
+
+      void loadMusic();
+      window.setInterval(() => void loadMusic(), 10000);
+    </script>
+  </body>
+</html>
