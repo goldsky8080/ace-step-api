@@ -30,7 +30,7 @@ class AceStepClient:
 
     def create_task(self, payload: CreateMusicRequest) -> AceTaskSummary:
         model_name = payload.model or "acestep-v15-turbo"
-        duration_seconds = payload.duration or 30
+        duration_seconds = payload.duration or 90
         request_body = {
             "prompt": payload.prompt or payload.stylePrompt,
             "lyrics": payload.lyrics,
